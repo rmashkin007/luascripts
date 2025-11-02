@@ -24,7 +24,7 @@ local PlaceId = game.PlaceId
 
 -- Track recently hopped servers to avoid rejoining
 local recentServers = {}
-local MAX_RECENT_SERVERS = 5 -- Keep track of last 5 servers
+local MAX_RECENT_SERVERS = 20 -- Keep track of last 20 servers (increased to prevent same-server rejoins)
 local hopCooldown = false
 
 -- Function to get current server job ID
@@ -121,7 +121,8 @@ local function findBestServer()
     for attempt = 1, maxAttempts do
         -- Get server list (using HttpService to query Roblox API)
         local success, result = pcall(function()
-            local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", PlaceId)
+            -- Query more servers and sort by player count descending
+            local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100", PlaceId)
             local response = HttpService:GetAsync(url)
             local data = HttpService:JSONDecode(response)
             
@@ -200,17 +201,33 @@ local function hopServer()
     end)
     
     local serverId = findBestServer()
+    local attempts = 0
+    local maxTeleportAttempts = 3
+    
+    -- Try to find a server that isn't recent, up to 3 attempts
+    while (serverId and (isRecentServer(serverId) or tostring(serverId) == tostring(currentServerId))) and attempts < maxTeleportAttempts do
+        attempts = attempts + 1
+        updateStatus(string.format("Server %d was recent, finding another...", attempts))
+        wait(0.5)
+        serverId = findBestServer()
+    end
     
     if serverId then
-        -- Double-check that we're not trying to teleport to the same server
-        if tostring(serverId) == tostring(currentServerId) then
-            updateStatus("Found server is current server, trying random teleport...")
-            -- Fallback: Teleport to a random server
+        -- Final verification: make sure it's not the current server and not recent
+        local serverIdStr = tostring(serverId)
+        local currentServerIdStr = tostring(currentServerId)
+        
+        if serverIdStr == currentServerIdStr or isRecentServer(serverId) then
+            updateStatus("All found servers were recent, using random teleport...")
+            -- Add current to recent before random teleport
             pcall(function()
                 TeleportService:Teleport(PlaceId, localPlayer)
             end)
             return
         end
+        
+        -- Add the target server to recent list before teleporting
+        addRecentServer(serverId)
         
         updateStatus("Found server, teleporting...")
         local success, errorMsg = pcall(function()
@@ -218,15 +235,22 @@ local function hopServer()
         end)
         
         if not success then
-            updateStatus("Teleport failed, trying random server...")
-            -- Fallback: Try teleporting to a random server
-            pcall(function()
-                TeleportService:Teleport(PlaceId, localPlayer)
-            end)
+            updateStatus("Teleport failed, finding new server...")
+            -- Remove from recent since teleport failed, and try again
+            for i, recentId in ipairs(recentServers) do
+                if recentId == tostring(serverId) then
+                    table.remove(recentServers, i)
+                    break
+                end
+            end
+            -- Try one more time
+            wait(1)
+            hopServer()
         end
     else
-        updateStatus("No suitable server found, trying random teleport...")
+        updateStatus("No suitable server found, using random teleport...")
         -- Fallback: Teleport to a random server
+        -- Verification function will catch if we join a recent server
         pcall(function()
             TeleportService:Teleport(PlaceId, localPlayer)
         end)
@@ -238,10 +262,57 @@ local function getPlayerCount()
     return #Players:GetPlayers()
 end
 
+-- Track if we've verified this server already
+local lastVerifiedServerId = nil
+
+-- Function to verify we're not on a recent server after joining
+local function verifyServerJoin()
+    spawn(function()
+        wait(5) -- Wait for server to fully load
+        local currentId = getCurrentServerId()
+        local currentIdStr = tostring(currentId)
+        
+        -- Only verify once per server
+        if currentIdStr ~= lastVerifiedServerId then
+            lastVerifiedServerId = currentIdStr
+            
+            if isRecentServer(currentId) then
+                updateStatus("Joined recent server, hopping again...")
+                wait(2)
+                hopServer()
+            end
+        end
+    end)
+end
+
+-- Monitor server changes (detects when we join a new server)
+local lastServerCheck = getCurrentServerId()
+
+local function monitorServerChange()
+    spawn(function()
+        while true do
+            wait(2)
+            local currentId = getCurrentServerId()
+            if tostring(currentId) ~= tostring(lastServerCheck) then
+                -- Server changed, verify it
+                lastServerCheck = currentId
+                verifyServerJoin()
+            end
+        end
+    end)
+end
+
+-- Start monitoring for server changes
+monitorServerChange()
+
 -- Initial check on script execution
 updateStatus("Initial check starting...")
 -- Wait a moment for server to fully load before checking
 wait(3)
+
+-- Verify we didn't join a recent server
+verifyServerJoin()
+
 if not hopCooldown and hasAvoidedUsername() then
     updateStatus("Found avoided username, hopping to new server...")
     hopServer()
