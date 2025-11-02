@@ -1,3 +1,6 @@
+-- Roblox Server Hopper Script
+
+-- Configuration: List of usernames to avoid
 local UsernamesToAvoid = {
     "rofls1212",
     "LaidBackAbstract66",
@@ -9,18 +12,48 @@ local UsernamesToAvoid = {
     "satoruhoj000",
 }
 
+-- Services
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 local localPlayer = Players.LocalPlayer
 
+-- Get current place ID
 local PlaceId = game.PlaceId
 
+-- Track recently hopped servers to avoid rejoining
+local recentServers = {}
+local MAX_RECENT_SERVERS = 5 -- Keep track of last 5 servers
+local hopCooldown = false
+
+-- Function to get current server job ID
 local function getCurrentServerId()
     return game.JobId
 end
 
+-- Function to add server to recent list
+local function addRecentServer(serverId)
+    local serverIdStr = tostring(serverId)
+    table.insert(recentServers, 1, serverIdStr) -- Add to beginning
+    -- Keep only the most recent servers
+    if #recentServers > MAX_RECENT_SERVERS then
+        table.remove(recentServers, MAX_RECENT_SERVERS + 1)
+    end
+end
+
+-- Function to check if server is in recent list
+local function isRecentServer(serverId)
+    local serverIdStr = tostring(serverId)
+    for _, recentId in pairs(recentServers) do
+        if recentId == serverIdStr then
+            return true
+        end
+    end
+    return false
+end
+
+-- Create GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ServerHopperGUI"
 screenGui.ResetOnSpawn = false
@@ -30,7 +63,7 @@ screenGui.Parent = CoreGui
 local frame = Instance.new("Frame")
 frame.Name = "StatusFrame"
 frame.Size = UDim2.new(0, 300, 0, 50)
-frame.Position = UDim2.new(0, 10, 1, -60)
+frame.Position = UDim2.new(0, 10, 1, -60) -- Left bottom corner with some padding
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 frame.BorderSizePixel = 0
 frame.BackgroundTransparency = 0.3
@@ -60,12 +93,15 @@ label.TextYAlignment = Enum.TextYAlignment.Center
 label.TextWrapped = true
 label.Parent = frame
 
+-- Function to update status text
 local function updateStatus(text)
     label.Text = text
 end
 
+-- Function to check if any player matches the username list (excluding local player)
 local function hasAvoidedUsername()
     for _, player in pairs(Players:GetPlayers()) do
+        -- Skip the local player
         if player ~= localPlayer then
             for _, username in pairs(UsernamesToAvoid) do
                 if player.Name:lower() == username:lower() then
@@ -77,17 +113,20 @@ local function hasAvoidedUsername()
     return false
 end
 
+-- Function to find a server with 2 available slots and max players
 local function findBestServer()
-    local maxAttempts = 10
+    local maxAttempts = 10 -- Try up to 10 times to find a good server
     local currentServerId = getCurrentServerId()
     
     for attempt = 1, maxAttempts do
+        -- Get server list (using HttpService to query Roblox API)
         local success, result = pcall(function()
             local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", PlaceId)
             local response = HttpService:GetAsync(url)
             local data = HttpService:JSONDecode(response)
             
             if data and data.data then
+                -- Filter servers with exactly 2 available slots (excluding current server)
                 local bestServer = nil
                 local maxPlayers = 0
                 
@@ -95,11 +134,13 @@ local function findBestServer()
                     local serverId = tostring(server.id)
                     local currentServerIdStr = tostring(currentServerId)
                     
-                    if serverId ~= currentServerIdStr then
+                    -- Skip if this is the current server or a recently hopped server
+                    if serverId ~= currentServerIdStr and not isRecentServer(server.id) then
                         local currentPlayers = server.playing or 0
                         local maxServerPlayers = server.maxPlayers or 10
                         local availableSlots = maxServerPlayers - currentPlayers
                         
+                        -- Look for server with 2 available slots and highest player count
                         if availableSlots == 2 and currentPlayers > maxPlayers then
                             maxPlayers = currentPlayers
                             bestServer = server.id
@@ -107,13 +148,15 @@ local function findBestServer()
                     end
                 end
                 
+                -- If no server with exactly 2 slots, find one with at least 2 slots and max players
                 if not bestServer then
                     maxPlayers = 0
                     for _, server in pairs(data.data) do
                         local serverId = tostring(server.id)
                         local currentServerIdStr = tostring(currentServerId)
                         
-                        if serverId ~= currentServerIdStr then
+                        -- Skip if this is the current server or a recently hopped server
+                        if serverId ~= currentServerIdStr and not isRecentServer(server.id) then
                             local currentPlayers = server.playing or 0
                             local maxServerPlayers = server.maxPlayers or 10
                             local availableSlots = maxServerPlayers - currentPlayers
@@ -134,21 +177,35 @@ local function findBestServer()
             return result
         end
         
-        wait(0.5)
+        wait(0.5) -- Wait before retry
     end
     
     return nil
 end
 
+-- Function to hop to a new server
 local function hopServer()
     updateStatus("Attempting to find a new server...")
     
-    local serverId = findBestServer()
     local currentServerId = getCurrentServerId()
     
+    -- Add current server to recent list before hopping (so we don't rejoin it)
+    addRecentServer(currentServerId)
+    
+    -- Set cooldown to prevent immediate re-check after hopping
+    hopCooldown = true
+    spawn(function()
+        wait(10) -- 10 second cooldown after hopping
+        hopCooldown = false
+    end)
+    
+    local serverId = findBestServer()
+    
     if serverId then
+        -- Double-check that we're not trying to teleport to the same server
         if tostring(serverId) == tostring(currentServerId) then
             updateStatus("Found server is current server, trying random teleport...")
+            -- Fallback: Teleport to a random server
             pcall(function()
                 TeleportService:Teleport(PlaceId, localPlayer)
             end)
@@ -162,44 +219,61 @@ local function hopServer()
         
         if not success then
             updateStatus("Teleport failed, trying random server...")
+            -- Fallback: Try teleporting to a random server
             pcall(function()
                 TeleportService:Teleport(PlaceId, localPlayer)
             end)
         end
     else
         updateStatus("No suitable server found, trying random teleport...")
+        -- Fallback: Teleport to a random server
         pcall(function()
             TeleportService:Teleport(PlaceId, localPlayer)
         end)
     end
 end
 
+-- Function to get current player count
 local function getPlayerCount()
     return #Players:GetPlayers()
 end
 
+-- Initial check on script execution
 updateStatus("Initial check starting...")
-if hasAvoidedUsername() then
+-- Wait a moment for server to fully load before checking
+wait(3)
+if not hopCooldown and hasAvoidedUsername() then
     updateStatus("Found avoided username, hopping to new server...")
     hopServer()
 else
     updateStatus("No avoided usernames found, staying on current server.")
 end
 
+-- Periodic check every 30 seconds
 spawn(function()
     while true do
         wait(30)
         
-        local playerCount = getPlayerCount()
-        updateStatus(string.format("Checking server... Players: %d", playerCount))
-        
-        if playerCount < 8 then
-            updateStatus("Player count below 8, hopping to new server...")
-            hopServer()
+        -- Skip check if cooldown is active (just hopped)
+        if hopCooldown then
+            updateStatus("Cooldown active, skipping check...")
         else
-            updateStatus(string.format("Server OK - %d players", playerCount))
+            local playerCount = getPlayerCount()
+            updateStatus(string.format("Checking server... Players: %d", playerCount))
+            
+            -- Check for avoided usernames first
+            if hasAvoidedUsername() then
+                updateStatus("Found avoided username, hopping to new server...")
+                hopServer()
+            elseif playerCount < 8 then
+                updateStatus("Player count below 8, hopping to new server...")
+                hopServer()
+            else
+                updateStatus(string.format("Server OK - %d players", playerCount))
+            end
         end
     end
 end)
 
 updateStatus("Script initialized. Monitoring every 30 seconds...")
+
