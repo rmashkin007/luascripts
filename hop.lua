@@ -122,7 +122,7 @@ local function findBestServer()
         -- Get server list (using HttpService to query Roblox API)
         local success, result = pcall(function()
             -- Query more servers and sort by player count descending
-            local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100", PlaceId)
+            local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&excludeFullGames=true&limit=100", PlaceId)
             local response = HttpService:GetAsync(url)
             local data = HttpService:JSONDecode(response)
             
