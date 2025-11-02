@@ -10,6 +10,10 @@ local UsernamesToAvoid = {
     "xXDarkangelOF1",
     "S1apL3gendGG",
     "satoruhoj000",
+	"kazikbeskazikbes",
+	"1_BabelGaming",
+	"TheDyerAnonym",
+	"shiyenoWORKING",
 }
 
 -- Services
