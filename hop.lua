@@ -143,11 +143,7 @@ spawn(function()
         local playerCount = getPlayerCount()
         updateStatus(string.format("Checking server... Players: %d", playerCount))
             
-        -- Check for avoided usernames first
-        if hasAvoidedUsername() then
-            updateStatus("Found avoided username, hopping to new server...")
-            serverHop()
-        elseif playerCount < 8 then
+        if playerCount < 8 then
             updateStatus("Player count below 8, hopping to new server...")
             serverHop()
         else
@@ -157,5 +153,3 @@ spawn(function()
 end)
 
 updateStatus("Script initialized. Monitoring every 30 seconds...")
-
-
