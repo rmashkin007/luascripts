@@ -14,6 +14,10 @@ local UsernamesToAvoid = {
 	"1_BabelGaming",
 	"TheDyerAnonym",
 	"shiyenoWORKING",
+	"ItzNivcent",
+	"Sub5Sub3Ch4d",
+	"antiabdulov_dayn",
+	"wiwi_88172",
 }
 
 -- Services
